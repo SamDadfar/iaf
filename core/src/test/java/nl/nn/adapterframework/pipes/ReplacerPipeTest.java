@@ -5,11 +5,24 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import nl.nn.adapterframework.stream.Message;
+
 import org.hamcrest.Matchers;
 import org.junit.Test;
 
 import nl.nn.adapterframework.configuration.ConfigurationException;
 import nl.nn.adapterframework.core.PipeRunResult;
+
 
 /**
  * ReplacerPipe Tester.
@@ -35,7 +48,6 @@ public class ReplacerPipeTest extends PipeTestBase<ReplacerPipe> {
 	public void getFindEmpty() throws Exception {
 		pipe.setFind("");
 		configureAndStartPipe();
-
 		PipeRunResult res = doPipe(pipe, "dsf", session);
 		assertFalse(res.getPipeForward().getName().isEmpty());
 
@@ -86,4 +98,65 @@ public class ReplacerPipeTest extends PipeTestBase<ReplacerPipe> {
 		assertThat(e.getMessage(), Matchers.containsString("replaceNonXmlChar [klkl] has to be one character"));
 	}
 
+	@Test
+	public void replacementWithInputStream() throws Exception {
+		// Create the ReplacerPipe and set the find and replace values
+
+		pipe.setFind("test");
+		pipe.setReplace("<TEST>");
+
+		// Invoke the doPipe method
+		PipeRunResult result = doPipe(pipe, new ByteArrayInputStream(("Hello this is great test\n to test replacerPipe \nwhen it supports inputStream, replace test with <TEST>!").getBytes()), session);
+		InputStream modifiedInputStream = result.getResult().asInputStream();
+		String modifiedContentString = readInputStreamAsString(modifiedInputStream);
+
+		// Verify the result
+		assertThat(modifiedContentString, Matchers.containsString("<TEST>"));
+
+	}
+
+	@Test
+	public void replacementInputStreamFromXMLFile() throws Exception {
+		// Set the find and replace values
+		pipe.setFind("</price>");
+		pipe.setReplace("$</price>");
+		pipe.setReplaceNonXmlChars(true);
+		// Read file in an input stream
+		String filePath = "src/test/resources/Pipes/books.xml";
+		try {
+			byte[] xmlBytes = readBytesFromFile(filePath);
+
+			// Invoke the doPipe method
+			InputStream input = new ByteArrayInputStream(xmlBytes);
+			PipeRunResult result = doPipe(pipe, input, session);
+
+			// Verify the result
+			String actualResult = result.getResult().asString();
+			assertThat(actualResult, Matchers.containsString("$</price>"));
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private static byte[] readBytesFromFile(String filePath) throws IOException {
+		Path path = Paths.get(filePath);
+		return Files.readAllBytes(path);
+	}
+	private String readInputStreamAsString(InputStream inputStream) throws IOException {
+		try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
+			StringBuilder result = new StringBuilder();
+			String line;
+			boolean firstLine = true;
+			while ((line = reader.readLine()) != null) {
+				if (!firstLine) {
+					result.append("\n"); // Add newline before each line (except the first)
+				}
+				firstLine = false;
+				result.append(line);
+			}
+			return result.toString();
+		}
+	}
 }
+
+

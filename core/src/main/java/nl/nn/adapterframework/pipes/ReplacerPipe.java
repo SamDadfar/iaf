@@ -15,10 +15,6 @@
 */
 package nl.nn.adapterframework.pipes;
 
-import java.io.IOException;
-
-import org.apache.commons.lang3.StringUtils;
-
 import nl.nn.adapterframework.configuration.ConfigurationException;
 import nl.nn.adapterframework.core.PipeLineSession;
 import nl.nn.adapterframework.core.PipeRunException;
@@ -27,6 +23,18 @@ import nl.nn.adapterframework.doc.ElementType;
 import nl.nn.adapterframework.doc.ElementType.ElementTypes;
 import nl.nn.adapterframework.stream.Message;
 import nl.nn.adapterframework.util.XmlEncodingUtils;
+
+import org.apache.commons.lang3.StringUtils;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Replaces all occurrences of one string with another.
@@ -39,10 +47,10 @@ public class ReplacerPipe extends FixedForwardPipe {
 
 	private String find;
 	private String replace;
-	private String lineSeparatorSymbol=null;
-	private boolean replaceNonXmlChars=false;
-	private String replaceNonXmlChar=null;
-	private boolean allowUnicodeSupplementaryCharacters=false;
+	private String lineSeparatorSymbol = null;
+	private boolean replaceNonXmlChars = false;
+	private String replaceNonXmlChar = null;
+	private boolean allowUnicodeSupplementaryCharacters = false;
 
 	{
 		setSizeStatistics(true);
@@ -65,9 +73,9 @@ public class ReplacerPipe extends FixedForwardPipe {
 			}
 		}
 		if (isReplaceNonXmlChars()) {
-			if (getReplaceNonXmlChar()!=null) {
-				if (getReplaceNonXmlChar().length()>1) {
-					throw new ConfigurationException("replaceNonXmlChar ["+getReplaceNonXmlChar()+"] has to be one character");
+			if (getReplaceNonXmlChar() != null) {
+				if (getReplaceNonXmlChar().length() > 1) {
+					throw new ConfigurationException("replaceNonXmlChar [" + getReplaceNonXmlChar() + "] has to be one character");
 				}
 			}
 		}
@@ -75,27 +83,68 @@ public class ReplacerPipe extends FixedForwardPipe {
 
 	@Override
 	public PipeRunResult doPipe(Message message, PipeLineSession session) throws PipeRunException {
-		String input;
 		try {
-			input = message.asString();
+			InputStream input = message.asInputStream();
+			if(input == null){
+				return new PipeRunResult(getSuccessForward(), new Message(new ByteArrayInputStream(new byte[0])));
+			}
+			InputStreamReader inputStreamReader = new InputStreamReader(input);
+			BufferedReader reader = new BufferedReader(inputStreamReader);
+			ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+			BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(outputStream));
+
+			String line;
+			boolean firstLine = true;
+			while ((line = reader.readLine()) != null) {
+				if (!firstLine) {
+					writer.newLine(); // Add newline before each line (except the first)
+				}
+				firstLine = false;
+
+				if (StringUtils.isNotEmpty(getFind())) {
+					line = line.replace(getFind(), getReplace());
+				}
+				if (isReplaceNonXmlChars()) {
+					if (StringUtils.isEmpty(getReplaceNonXmlChar())) {
+						line = XmlEncodingUtils.stripNonValidXmlCharacters(line, isAllowUnicodeSupplementaryCharacters());
+					} else {
+						line = XmlEncodingUtils.replaceNonValidXmlCharacters(line, getReplaceNonXmlChar().charAt(0), false, isAllowUnicodeSupplementaryCharacters());
+					}
+				}
+				writer.write(line);
+			}
+			writer.flush();
+			InputStream modifiedInputStream = new ByteArrayInputStream(outputStream.toByteArray());
+
+			return new PipeRunResult(getSuccessForward(), modifiedInputStream);
 		} catch (IOException e) {
 			throw new PipeRunException(this, "cannot open stream", e);
 		}
-		if (StringUtils.isEmpty(input)) {
-			return new PipeRunResult(getSuccessForward(), input);
-		}
+	}
 
-		if (StringUtils.isNotEmpty(getFind())) {
-			input = input.replace(getFind(), getReplace());
-		}
-		if (isReplaceNonXmlChars()) {
-			if (StringUtils.isEmpty(getReplaceNonXmlChar())) {
-				input = XmlEncodingUtils.stripNonValidXmlCharacters(input, isAllowUnicodeSupplementaryCharacters());
-			} else {
-				input = XmlEncodingUtils.replaceNonValidXmlCharacters(input, getReplaceNonXmlChar().charAt(0), false, isAllowUnicodeSupplementaryCharacters());
+	private String readInputStreamToString(InputStream inputStream) throws IOException {
+		try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+			StringBuilder result = new StringBuilder();
+			String line;
+			boolean firstLine = true;
+			while ((line = reader.readLine()) != null) {
+				if (!firstLine) {
+					result.append(System.lineSeparator());
+				} else {
+					firstLine = false;
+				}
+				result.append(line);
 			}
+			return result.toString();
 		}
-		return new PipeRunResult(getSuccessForward(),input);
+	}
+
+	private String performReplacement(String input) {
+		String find = getFind();
+		String replace = getReplace();
+
+		// Perform the replacement
+		return input.replace(find, replace);
 	}
 
 	/**
@@ -104,6 +153,7 @@ public class ReplacerPipe extends FixedForwardPipe {
 	public void setFind(String find) {
 		this.find = find;
 	}
+
 	public String getFind() {
 		return find;
 	}
@@ -114,6 +164,7 @@ public class ReplacerPipe extends FixedForwardPipe {
 	public void setReplace(String replace) {
 		this.replace = replace;
 	}
+
 	public String getReplace() {
 		return replace;
 	}
@@ -130,7 +181,9 @@ public class ReplacerPipe extends FixedForwardPipe {
 		lineSeparatorSymbol = string;
 	}
 
-	/** Replace all non XML chars (not in the <a href="http://www.w3.org/TR/2006/REC-xml-20060816/#NT-Char">character range as specified by the XML specification</a>) with {@link XmlEncodingUtils#replaceNonValidXmlCharacters(String, char, boolean, boolean) replaceNonValidXmlCharacters}
+	/**
+	 * Replace all non XML chars (not in the <a href="http://www.w3.org/TR/2006/REC-xml-20060816/#NT-Char">character range as specified by the XML specification</a>) with {@link XmlEncodingUtils#replaceNonValidXmlCharacters(String, char, boolean, boolean) replaceNonValidXmlCharacters}
+	 *
 	 * @ff.default false
 	 */
 	public void setReplaceNonXmlChars(boolean b) {
@@ -143,6 +196,7 @@ public class ReplacerPipe extends FixedForwardPipe {
 
 	/**
 	 * character that will replace each non valid xml character (empty string is also possible) (use &amp;#x00bf; for inverted question mark)
+	 *
 	 * @ff.default empty string
 	 */
 	public void setReplaceNonXmlChar(String replaceNonXmlChar) {
@@ -155,6 +209,7 @@ public class ReplacerPipe extends FixedForwardPipe {
 
 	/**
 	 * Whether to allow Unicode supplementary characters (like a smiley) during {@link XmlEncodingUtils#replaceNonValidXmlCharacters(String, char, boolean, boolean) replaceNonValidXmlCharacters}
+	 *
 	 * @ff.default false
 	 */
 	public void setAllowUnicodeSupplementaryCharacters(boolean b) {
@@ -165,4 +220,56 @@ public class ReplacerPipe extends FixedForwardPipe {
 		return allowUnicodeSupplementaryCharacters;
 	}
 
+	private static class ReplacementInputStream extends InputStream {
+		private final InputStream underlyingStream;
+		private final byte[] findBytes;
+		private final byte[] replaceBytes;
+		private final byte[] buffer = new byte[4096]; // Adjust buffer size as needed
+		private int bufferPosition = 0;
+		private int replacementPosition = 0;
+
+		protected ReplacementInputStream(InputStream underlyingStream, String find, String replace) {
+			super();
+			this.underlyingStream = underlyingStream;
+			this.findBytes = find.getBytes();
+			this.replaceBytes = replace.getBytes();
+		}
+
+		@Override
+		public int read() throws IOException {
+			if (replacementPosition < findBytes.length) {
+				if (replaceBytes.length > replacementPosition) {
+					return replaceBytes[replacementPosition++];
+				} else {
+					replacementPosition = 0; // Reset the position to start replacing from the beginning
+				}
+			}
+
+			if (bufferPosition >= buffer.length) {
+				int bytesRead = underlyingStream.read(buffer);
+				if (bytesRead == -1) {
+					return -1; // End of stream
+				}
+				bufferPosition = 0;
+			}
+
+			byte currentByte = buffer[bufferPosition++];
+
+			// Check if the current byte matches the current position of findBytes
+			if (currentByte == findBytes[replacementPosition]) {
+				replacementPosition++;
+
+				// If the replacement is complete, reset and start replacing from the beginning
+				if (replacementPosition == findBytes.length) {
+					replacementPosition = 0; // Reset the position to start replacing from the beginning
+					return replaceBytes[0];
+				}
+			} else {
+				// Reset the replacement position if it doesn't match
+				replacementPosition = 0;
+			}
+
+			return currentByte;
+		}
+	}
 }
