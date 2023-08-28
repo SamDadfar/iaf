@@ -15,17 +15,6 @@
 */
 package nl.nn.adapterframework.pipes;
 
-import nl.nn.adapterframework.configuration.ConfigurationException;
-import nl.nn.adapterframework.core.PipeLineSession;
-import nl.nn.adapterframework.core.PipeRunException;
-import nl.nn.adapterframework.core.PipeRunResult;
-import nl.nn.adapterframework.doc.ElementType;
-import nl.nn.adapterframework.doc.ElementType.ElementTypes;
-import nl.nn.adapterframework.stream.Message;
-import nl.nn.adapterframework.util.XmlEncodingUtils;
-
-import org.apache.commons.lang3.StringUtils;
-
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayInputStream;
@@ -35,6 +24,17 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+
+import org.apache.commons.lang3.StringUtils;
+
+import nl.nn.adapterframework.configuration.ConfigurationException;
+import nl.nn.adapterframework.core.PipeLineSession;
+import nl.nn.adapterframework.core.PipeRunException;
+import nl.nn.adapterframework.core.PipeRunResult;
+import nl.nn.adapterframework.doc.ElementType;
+import nl.nn.adapterframework.doc.ElementType.ElementTypes;
+import nl.nn.adapterframework.stream.Message;
+import nl.nn.adapterframework.util.XmlEncodingUtils;
 
 /**
  * Replaces all occurrences of one string with another.
@@ -85,7 +85,7 @@ public class ReplacerPipe extends FixedForwardPipe {
 	public PipeRunResult doPipe(Message message, PipeLineSession session) throws PipeRunException {
 		try {
 			InputStream input = message.asInputStream();
-			if(input == null){
+			if (input == null) {
 				return new PipeRunResult(getSuccessForward(), new Message(new ByteArrayInputStream(new byte[0])));
 			}
 			InputStreamReader inputStreamReader = new InputStreamReader(input);
@@ -218,58 +218,5 @@ public class ReplacerPipe extends FixedForwardPipe {
 
 	public boolean isAllowUnicodeSupplementaryCharacters() {
 		return allowUnicodeSupplementaryCharacters;
-	}
-
-	private static class ReplacementInputStream extends InputStream {
-		private final InputStream underlyingStream;
-		private final byte[] findBytes;
-		private final byte[] replaceBytes;
-		private final byte[] buffer = new byte[4096]; // Adjust buffer size as needed
-		private int bufferPosition = 0;
-		private int replacementPosition = 0;
-
-		protected ReplacementInputStream(InputStream underlyingStream, String find, String replace) {
-			super();
-			this.underlyingStream = underlyingStream;
-			this.findBytes = find.getBytes();
-			this.replaceBytes = replace.getBytes();
-		}
-
-		@Override
-		public int read() throws IOException {
-			if (replacementPosition < findBytes.length) {
-				if (replaceBytes.length > replacementPosition) {
-					return replaceBytes[replacementPosition++];
-				} else {
-					replacementPosition = 0; // Reset the position to start replacing from the beginning
-				}
-			}
-
-			if (bufferPosition >= buffer.length) {
-				int bytesRead = underlyingStream.read(buffer);
-				if (bytesRead == -1) {
-					return -1; // End of stream
-				}
-				bufferPosition = 0;
-			}
-
-			byte currentByte = buffer[bufferPosition++];
-
-			// Check if the current byte matches the current position of findBytes
-			if (currentByte == findBytes[replacementPosition]) {
-				replacementPosition++;
-
-				// If the replacement is complete, reset and start replacing from the beginning
-				if (replacementPosition == findBytes.length) {
-					replacementPosition = 0; // Reset the position to start replacing from the beginning
-					return replaceBytes[0];
-				}
-			} else {
-				// Reset the replacement position if it doesn't match
-				replacementPosition = 0;
-			}
-
-			return currentByte;
-		}
 	}
 }
