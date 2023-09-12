@@ -18,12 +18,16 @@ package nl.nn.adapterframework.pipes;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 import org.apache.commons.lang3.StringUtils;
 
@@ -88,63 +92,110 @@ public class ReplacerPipe extends FixedForwardPipe {
 			if (input == null) {
 				return new PipeRunResult(getSuccessForward(), new Message(new ByteArrayInputStream(new byte[0])));
 			}
-			InputStreamReader inputStreamReader = new InputStreamReader(input);
-			BufferedReader reader = new BufferedReader(inputStreamReader);
-			ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-			BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(outputStream));
+			try {
+				InputStreamReader inputStreamReader = new InputStreamReader(input);
+				 BufferedReader reader = new BufferedReader(inputStreamReader);
+				 PipedOutputStream outputStream = new PipedOutputStream();
+				 PipedInputStream modifiedInputStream = new PipedInputStream(outputStream);
+				 BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(outputStream));
 
-			String line;
-			boolean firstLine = true;
-			while ((line = reader.readLine()) != null) {
-				if (!firstLine) {
-					writer.newLine(); // Add newline before each line (except the first)
-				}
-				firstLine = false;
+				List<String> findPattern;
+				List<Replacement> replacements = new ArrayList<>();
+				int matchedIndex = 0;
 
-				if (StringUtils.isNotEmpty(getFind())) {
-					line = line.replace(getFind(), getReplace());
-				}
-				if (isReplaceNonXmlChars()) {
-					if (StringUtils.isEmpty(getReplaceNonXmlChar())) {
-						line = XmlEncodingUtils.stripNonValidXmlCharacters(line, isAllowUnicodeSupplementaryCharacters());
+				findPattern = StringUtils.isNotEmpty(getFind()) && getFind().contains("\n")
+							  ? Arrays.asList(getFind().split("\n"))
+							  : Collections.singletonList(getFind());
+				String line;
+				while ((line = reader.readLine()) != null) {
+					if (findPattern.size() == 1) {
+						line = line.replace(getFind(), getReplace());
+						writeToOutput(writer, line);
 					} else {
-						line = XmlEncodingUtils.replaceNonValidXmlCharacters(line, getReplaceNonXmlChar().charAt(0), false, isAllowUnicodeSupplementaryCharacters());
+						Replacement findMatch = findPattern(line, findPattern.get(matchedIndex));
+						if (findMatch != null) {
+							if (matchedIndex == replacements.size()) {
+								replacements.add(findMatch);
+								matchedIndex++;
+							}
+							if (replacements.size() == findPattern.size()) {
+								applyReplacements(replacements, writer);
+								replacements.clear();
+								matchedIndex = 0;
+							}
+						} else {
+							if (!replacements.isEmpty()) {
+								for (Replacement replacement : replacements) {
+									writeToOutput(writer, replacement.line);
+								}
+							}
+							replacements.clear();
+							writeToOutput(writer, line);
+						}
 					}
 				}
-				writer.write(line);
+				if (!replacements.isEmpty()) {
+					for (Replacement replacement : replacements) {
+						writeToOutput(writer, replacement.line);
+					}
+				}
+				writer.flush();
+				return new PipeRunResult(getSuccessForward(), modifiedInputStream);
+			} catch (IOException e) {
+				throw new PipeRunException(this, "Error processing stream", e);
 			}
-			writer.flush();
-			InputStream modifiedInputStream = new ByteArrayInputStream(outputStream.toByteArray());
-
-			return new PipeRunResult(getSuccessForward(), modifiedInputStream);
 		} catch (IOException e) {
 			throw new PipeRunException(this, "cannot open stream", e);
 		}
 	}
 
-	private String readInputStreamToString(InputStream inputStream) throws IOException {
-		try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
-			StringBuilder result = new StringBuilder();
-			String line;
-			boolean firstLine = true;
-			while ((line = reader.readLine()) != null) {
-				if (!firstLine) {
-					result.append(System.lineSeparator());
-				} else {
-					firstLine = false;
-				}
-				result.append(line);
+	private void writeToOutput(BufferedWriter writer, String line) throws IOException {
+		if (isReplaceNonXmlChars()) {
+			if (StringUtils.isEmpty(getReplaceNonXmlChar())) {
+				line = XmlEncodingUtils.stripNonValidXmlCharacters(line, isAllowUnicodeSupplementaryCharacters());
+			} else {
+				line = XmlEncodingUtils.replaceNonValidXmlCharacters(line, getReplaceNonXmlChar().charAt(0), false, isAllowUnicodeSupplementaryCharacters());
 			}
-			return result.toString();
 		}
+		writer.write(line);
+		writer.newLine();
 	}
 
-	private String performReplacement(String input) {
-		String find = getFind();
-		String replace = getReplace();
+	private void applyReplacements(List<Replacement> replacements, BufferedWriter writer) throws IOException {
+		StringBuilder modifiedLines = new StringBuilder();
+		Replacement first = replacements.get(0);
+		Replacement last = replacements.get(replacements.size() - 1);
+		modifiedLines.append(first.line, 0, first.start);
+		modifiedLines.append(getReplace());
+		if (replacements.size() > 2) {
+			modifiedLines.append(System.lineSeparator());
+			modifiedLines.append(last.line, last.end, last.line.length());
+		}
+		writeToOutput(writer, modifiedLines.toString());
+	}
 
-		// Perform the replacement
-		return input.replace(find, replace);
+	Replacement findPattern(String line, String pattern) {
+		Replacement result = null;
+		int startPos = 0;
+		int index;
+		if ((index = line.indexOf(pattern, startPos)) != -1) {
+			result = new Replacement(line, index, index + pattern.length(), pattern);
+		}
+		return result;
+	}
+
+	private static class Replacement {
+		int start;
+		int end;
+		String replace;
+		String line;
+
+		Replacement(String line, int start, int end, String replace) {
+			this.start = start;
+			this.end = end;
+			this.replace = replace;
+			this.line = line;
+		}
 	}
 
 	/**
@@ -219,4 +270,6 @@ public class ReplacerPipe extends FixedForwardPipe {
 	public boolean isAllowUnicodeSupplementaryCharacters() {
 		return allowUnicodeSupplementaryCharacters;
 	}
+
+
 }
