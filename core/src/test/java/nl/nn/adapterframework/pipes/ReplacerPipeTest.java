@@ -7,9 +7,12 @@ import static org.junit.Assert.assertThrows;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -99,16 +102,17 @@ public class ReplacerPipeTest extends PipeTestBase<ReplacerPipe> {
 	public void replacementWithInputStream() throws Exception {
 		// Create the ReplacerPipe and set the find and replace values
 
-		pipe.setFind("test");
+		pipe.setFind("test\nto test replacerPipe\n");
 		pipe.setReplace("<TEST>");
-
+		String inputString = "Hello this is great test\nto test replacerPipe\nwhen it supports inputStream, replace test with <TEST>!";
 		// Invoke the doPipe method
-		PipeRunResult result = doPipe(pipe, new ByteArrayInputStream(("Hello this is great test\n to test replacerPipe \nwhen it supports inputStream, replace test with <TEST>!").getBytes()), session);
+		PipeRunResult result = doPipe(pipe, new ByteArrayInputStream(inputString.getBytes()), session);
 		InputStream modifiedInputStream = result.getResult().asInputStream();
+
 		String modifiedContentString = readInputStreamAsString(modifiedInputStream);
 
 		// Verify the result
-		assertThat(modifiedContentString, Matchers.containsString("<TEST>"));
+		assertThat(modifiedContentString, Matchers.containsString("Hello this is great <TEST>\nwhen it supports inputStream, replace test with <TEST>!"));
 
 	}
 
@@ -156,5 +160,6 @@ public class ReplacerPipeTest extends PipeTestBase<ReplacerPipe> {
 		}
 	}
 }
+
 
 
